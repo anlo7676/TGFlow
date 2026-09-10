@@ -1,0 +1,2 @@
+*.sh text eol=lf
+/tgflow text eol=lf
