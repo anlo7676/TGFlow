@@ -95,8 +95,8 @@ command=${1:-help}
 case "$command" in
     deploy)
         command -v docker >/dev/null 2>&1 || { echo "未找到 Docker，请先安装 Docker Engine 与 Compose 插件。" >&2; exit 1; }
-        docker compose version >/dev/null 2>&1 || { echo "未找到 Docker Compose 插件。" >&2; exit 1; }
         ensure_env
+        docker compose version >/dev/null 2>&1 || { echo "未找到 Docker Compose 插件。" >&2; exit 1; }
         compose up -d --build --remove-orphans
         port=$(get_env PANEL_PORT); port=${port:-8012}
         username=$(get_env ADMIN_USERNAME); username=${username:-admin}
