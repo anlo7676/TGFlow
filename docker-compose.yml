@@ -1,0 +1,135 @@
+name: tgflow
+
+x-app-environment: &app-environment
+  APP_NAME: ${APP_NAME:-TGFlow}
+  APP_ENV: production
+  APP_KEY: ${APP_KEY:?请先执行 ./tgflow deploy 生成配置}
+  APP_DEBUG: "false"
+  APP_URL: ${APP_URL:-http://localhost:8012}
+  APP_TIMEZONE: ${APP_TIMEZONE:-Asia/Shanghai}
+  LOG_CHANNEL: stderr
+  LOG_LEVEL: ${LOG_LEVEL:-warning}
+  DB_CONNECTION: mysql
+  DB_HOST: mysql
+  DB_PORT: 3306
+  DB_DATABASE: ${DB_DATABASE:-tgflow}
+  DB_USERNAME: ${DB_USERNAME:-tgflow}
+  DB_PASSWORD: ${DB_PASSWORD:?请先执行 ./tgflow deploy 生成配置}
+  REDIS_HOST: redis
+  REDIS_PORT: 6379
+  CACHE_DRIVER: redis
+  QUEUE_CONNECTION: redis
+  SESSION_DRIVER: redis
+  SESSION_SECURE_COOKIE: ${SESSION_SECURE_COOKIE:-false}
+  PANEL_ALLOWED_ORIGINS: ${PANEL_ALLOWED_ORIGINS:-http://localhost:8012}
+  SSH_MASTER_KEY: ${SSH_MASTER_KEY:?请先执行 ./tgflow deploy 生成配置}
+  SSH_MASTER_KEY_VERSION: ${SSH_MASTER_KEY_VERSION:-v1}
+  SSH_PREVIOUS_MASTER_KEYS_JSON: ${SSH_PREVIOUS_MASTER_KEYS_JSON:-{}}
+  ADMIN_TOTP_KEY: ${ADMIN_TOTP_KEY:?请先执行 ./tgflow deploy 生成配置}
+  ADMIN_TOTP_REQUIRED: ${ADMIN_TOTP_REQUIRED:-false}
+  ALLOWED_SSH_NETWORKS: ${ALLOWED_SSH_NETWORKS:-}
+  MTPROXYMAX_VERSION: ${MTPROXYMAX_VERSION:-}
+  MTPROXYMAX_SHA256: ${MTPROXYMAX_SHA256:-}
+  EPAY_BASE_URL: ${EPAY_BASE_URL:-}
+  EPAY_PID: ${EPAY_PID:-}
+  EPAY_KEY: ${EPAY_KEY:-}
+  EPAY_NOTIFY_URL: ${EPAY_NOTIFY_URL:-}
+  EPAY_RETURN_URL: ${EPAY_RETURN_URL:-}
+  TELEGRAM_BOT_TOKEN: ${TELEGRAM_BOT_TOKEN:-}
+  TELEGRAM_WEBHOOK_SECRET: ${TELEGRAM_WEBHOOK_SECRET:-}
+
+x-app-service: &app-service
+  build:
+    context: ./backend
+  environment: *app-environment
+  restart: unless-stopped
+  volumes:
+    - app-storage:/var/www/html/storage
+  networks: [tgflow]
+
+services:
+  init:
+    <<: *app-service
+    restart: "no"
+    command: ["/usr/local/bin/tgflow-init"]
+    environment:
+      <<: *app-environment
+      ADMIN_USERNAME: ${ADMIN_USERNAME:-admin}
+      ADMIN_EMAIL: ${ADMIN_EMAIL:-admin@localhost}
+      ADMIN_PASSWORD: ${ADMIN_PASSWORD:?请先执行 ./tgflow deploy 生成配置}
+    depends_on:
+      mysql:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+
+  app:
+    <<: *app-service
+    depends_on:
+      init:
+        condition: service_completed_successfully
+
+  queue:
+    <<: *app-service
+    command: ["php", "artisan", "queue:work", "--sleep=1", "--tries=5", "--timeout=300"]
+    depends_on:
+      init:
+        condition: service_completed_successfully
+
+  scheduler:
+    <<: *app-service
+    command: ["sh", "-c", "while true; do php artisan schedule:run --no-interaction; sleep 60; done"]
+    depends_on:
+      init:
+        condition: service_completed_successfully
+
+  web:
+    build:
+      context: .
+      dockerfile: deploy/Dockerfile
+    ports:
+      - "${PANEL_PORT:-8012}:80"
+    restart: unless-stopped
+    depends_on:
+      app:
+        condition: service_started
+    networks: [tgflow]
+
+  mysql:
+    image: mysql:5.7.44
+    command: --character-set-server=utf8mb4 --collation-server=utf8mb4_unicode_ci --sql-mode=STRICT_TRANS_TABLES,NO_ZERO_IN_DATE,NO_ZERO_DATE,ERROR_FOR_DIVISION_BY_ZERO,NO_ENGINE_SUBSTITUTION
+    environment:
+      MYSQL_DATABASE: ${DB_DATABASE:-tgflow}
+      MYSQL_USER: ${DB_USERNAME:-tgflow}
+      MYSQL_PASSWORD: ${DB_PASSWORD:?请先执行 ./tgflow deploy 生成配置}
+      MYSQL_ROOT_PASSWORD: ${DB_ROOT_PASSWORD:?请先执行 ./tgflow deploy 生成配置}
+    healthcheck:
+      test: ["CMD-SHELL", "mysqladmin ping -h 127.0.0.1 -u root -p$$MYSQL_ROOT_PASSWORD --silent"]
+      interval: 5s
+      timeout: 5s
+      retries: 30
+    restart: unless-stopped
+    volumes:
+      - mysql-data:/var/lib/mysql
+    networks: [tgflow]
+
+  redis:
+    image: redis:7.4-alpine
+    command: ["redis-server", "--appendonly", "yes"]
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+    restart: unless-stopped
+    volumes:
+      - redis-data:/data
+    networks: [tgflow]
+
+networks:
+  tgflow:
+
+volumes:
+  app-storage:
+  mysql-data:
+  redis-data:
